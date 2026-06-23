@@ -3,12 +3,33 @@ using Unity.MLAgents;
 using Unity.MLAgents.Actuators;
 using Unity.MLAgents.Sensors;
 using UnityEngine.InputSystem;
+using TMPro;
 
 public class CatAgent : Agent
 {
     public Transform mouse;
-    public float moveSpeed = 5f;
+    public float moveSpeed = 6f;
     public float arenaSize = 5f;
+
+    ///
+    public LayerMask obstacleLayer;
+    public float obstacleStuckTimeLimit = 1.0f;
+
+    private float obstacleContactTimer = 0f;
+    /// 
+
+    //napisy
+    public TextMeshProUGUI scoreText;
+
+    private int roundNumber = 1;
+    private int catWins = 0;
+    private int mouseWins = 0;
+
+    //limit czasu
+    public float episodeTimeLimit = 15f;
+    private float episodeTimer = 0f;
+
+
 
     private float previousDistance;
     private Collider2D catCollider;
@@ -24,6 +45,7 @@ public class CatAgent : Agent
 
     public override void OnEpisodeBegin()
     {
+
         // Losowe ustawienie kota
         transform.localPosition = new Vector3(
             Random.Range(-arenaSize+1, arenaSize-1),
@@ -39,6 +61,36 @@ public class CatAgent : Agent
         );
 
         previousDistance = Vector3.Distance(transform.localPosition, mouse.localPosition);
+        // licznik czasu przy przeszkodach
+        obstacleContactTimer = 0f;
+        // licznik czasu rundy
+        episodeTimer = 0f;
+
+        UpdateScoreText();
+    }
+
+    private void UpdateScoreText()
+    {
+        if (scoreText != null)
+        {
+            scoreText.text = $"Runda: {roundNumber} | Kot: {catWins} | Mysz: {mouseWins}";
+        }
+    }
+
+    private void EndRound(bool catWon)
+    {
+        if (catWon)
+        {
+            catWins++;
+        }
+        else
+        {
+            mouseWins++;
+        }
+
+        roundNumber++;
+        UpdateScoreText();
+        EndEpisode();
     }
 
     public override void CollectObservations(VectorSensor sensor)
@@ -62,33 +114,82 @@ public class CatAgent : Agent
         float moveX = Mathf.Clamp(actions.ContinuousActions[0], -1f, 1f);
         float moveY = Mathf.Clamp(actions.ContinuousActions[1], -1f, 1f);
 
+        // sprawdzanie czasu
+        episodeTimer += Time.deltaTime;
+
+        if (episodeTimer >= episodeTimeLimit)
+        {
+            SetReward(-1.5f);
+            EndRound(false);
+            return;
+        }
+
         Vector3 movement = new Vector3(moveX, moveY, 0f) * moveSpeed * Time.deltaTime;
         transform.localPosition += movement;
 
-        float currentDistance = Vector3.Distance(transform.localPosition, mouse.localPosition);
-
-        // Mała kara za każdy krok, żeby agent nie tracił czasu
-        AddReward(-0.001f);
-
-        // Nagroda za zbliżanie się do myszy
-        if (currentDistance < previousDistance)
+        // sprawdzenie blokowania przy przeszkodzie
+        if (catCollider.IsTouchingLayers(obstacleLayer))
         {
-            AddReward(0.005f);
+            obstacleContactTimer += Time.deltaTime;
+            AddReward(-0.003f);
+
+            if (obstacleContactTimer >= obstacleStuckTimeLimit)
+            {
+                SetReward(-1f);
+                EndRound(false);
+                return;
+            }
         }
         else
         {
-            AddReward(-0.005f);
+            obstacleContactTimer = 0f;
         }
 
+
+
+
+
+        float currentDistance = Vector3.Distance(transform.localPosition, mouse.localPosition);
+
+        // kara za każdy krok, ale niezbyt mocna
+        AddReward(-0.002f);
+
+        // nagroda za zmniejszanie odległości do myszy
+        float distanceChange = previousDistance - currentDistance;
+        AddReward(distanceChange * 0.05f);
         previousDistance = currentDistance;
+
+        // Dodatkowa nagroda za ruch w kierunku myszy
+        if (movement.sqrMagnitude > 0.0001f)
+        {
+            Vector3 directionToMouseNormalized =
+                (mouse.localPosition - transform.localPosition).normalized;
+
+            Vector3 movementDirection = movement.normalized;
+
+            float chaseAlignment =
+                Vector3.Dot(movementDirection, directionToMouseNormalized);
+
+            AddReward(chaseAlignment * 0.006f);
+        }
+
+
+
+
+
+
 
         // Kot złapał mysz
         ColliderDistance2D colliderDistance = catCollider.Distance(mouseCollider);
 
         if (colliderDistance.isOverlapped)
         {
-            SetReward(1f);
-            EndEpisode();
+            float timeBonus = 1f - (episodeTimer / episodeTimeLimit);
+            timeBonus = Mathf.Clamp01(timeBonus);
+
+            SetReward(2f + timeBonus);
+            EndRound(true);
+            return;
         }
 
         // Kot wyszedł poza planszę
@@ -101,7 +202,7 @@ public class CatAgent : Agent
             catBounds.max.y > arenaBounds.max.y)
         {
             SetReward(-1f);
-            EndEpisode();
+            EndRound(false);
             return;
         }
     }

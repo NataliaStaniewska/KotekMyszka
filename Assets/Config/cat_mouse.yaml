@@ -22,12 +22,6 @@ behaviors:
         gamma: 0.99
         strength: 1.0
 
-    max_steps: 500000
+    max_steps: 200000
     time_horizon: 64
-    summary_freq: 10000
-
-    engine_settings:
-  no_graphics: false
-  time_scale: 20
-  target_frame_rate: -1
-  capture_frame_rate: 60
+    summary_freq: 5000
